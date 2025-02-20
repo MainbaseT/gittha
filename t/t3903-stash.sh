@@ -393,6 +393,15 @@ test_expect_success 'stash --staged' '
 	test bar,bar4 = $(cat file),$(cat file2)
 '
 
+test_expect_success 'stash --staged with binary file' '
+	printf "\0" >file &&
+	git add file &&
+	git stash --staged &&
+	git stash pop &&
+	printf "\0" >expect &&
+	test_cmp expect file
+'
+
 test_expect_success 'dont assume push with non-option args' '
 	test_must_fail git stash -q drop 2>err &&
 	test_grep -e "subcommand wasn'\''t specified; '\''push'\'' can'\''t be assumed due to unexpected token '\''drop'\''" err
@@ -1386,6 +1395,21 @@ test_expect_success 'stash --keep-index with file deleted in index does not resu
 	git rm to-remove &&
 	git stash --keep-index &&
 	test_path_is_missing to-remove
+'
+
+test_expect_success 'stash --keep-index --include-untracked with empty tree' '
+	test_when_finished "rm -rf empty" &&
+	git init empty &&
+	(
+		cd empty &&
+		git commit --allow-empty --message "empty" &&
+		echo content >file &&
+		git stash push --keep-index --include-untracked &&
+		test_path_is_missing file &&
+		git stash pop &&
+		echo content >expect &&
+		test_cmp expect file
+	)
 '
 
 test_expect_success 'stash apply should succeed with unmodified file' '
