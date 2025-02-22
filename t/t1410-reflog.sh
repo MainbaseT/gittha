@@ -7,7 +7,6 @@ test_description='Test prune and reflog expiration'
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
-TEST_PASSES_SANITIZE_LEAK=true
 . ./test-lib.sh
 
 check_have () {
@@ -144,6 +143,14 @@ test_expect_success rewind '
 
 	git reflog refs/heads/main >output &&
 	test_line_count = 5 output
+'
+
+test_expect_success 'reflog expire should not barf on an annotated tag' '
+	test_when_finished "git tag -d v0.tag || :" &&
+	git -c core.logAllRefUpdates=always \
+		tag -a -m "tag name" v0.tag main &&
+	git reflog expire --dry-run refs/tags/v0.tag 2>err &&
+	test_grep ! "error: [Oo]bject .* not a commit" err
 '
 
 test_expect_success 'corrupt and check' '
@@ -434,6 +441,114 @@ test_expect_success 'empty reflog' '
 	test-tool ref-store main create-reflog refs/heads/foo &&
 	git -C empty reflog expire --all 2>err &&
 	test_must_be_empty err
+'
+
+test_expect_success 'list reflogs' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		git reflog list >actual &&
+		test_must_be_empty actual &&
+
+		test_commit A &&
+		cat >expect <<-EOF &&
+		HEAD
+		refs/heads/main
+		EOF
+		git reflog list >actual &&
+		test_cmp expect actual &&
+
+		git branch b &&
+		cat >expect <<-EOF &&
+		HEAD
+		refs/heads/b
+		refs/heads/main
+		EOF
+		git reflog list >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'list reflogs with worktree' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+
+		test_commit A &&
+		git worktree add wt &&
+		git -c core.logAllRefUpdates=always \
+			update-ref refs/worktree/main HEAD &&
+		git -c core.logAllRefUpdates=always \
+			update-ref refs/worktree/per-worktree HEAD &&
+		git -c core.logAllRefUpdates=always -C wt \
+			update-ref refs/worktree/per-worktree HEAD &&
+		git -c core.logAllRefUpdates=always -C wt \
+			update-ref refs/worktree/worktree HEAD &&
+
+		cat >expect <<-EOF &&
+		HEAD
+		refs/heads/main
+		refs/heads/wt
+		refs/worktree/main
+		refs/worktree/per-worktree
+		EOF
+		git reflog list >actual &&
+		test_cmp expect actual &&
+
+		cat >expect <<-EOF &&
+		HEAD
+		refs/heads/main
+		refs/heads/wt
+		refs/worktree/per-worktree
+		refs/worktree/worktree
+		EOF
+		git -C wt reflog list >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'reflog list returns error with additional args' '
+	cat >expect <<-EOF &&
+	error: list does not accept arguments: ${SQ}bogus${SQ}
+	EOF
+	test_must_fail git reflog list bogus 2>err &&
+	test_cmp expect err
+'
+
+test_expect_success 'reflog for symref with unborn target can be listed' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		test_commit A &&
+		git symbolic-ref HEAD refs/heads/unborn &&
+		cat >expect <<-EOF &&
+		HEAD
+		refs/heads/main
+		EOF
+		git reflog list >actual &&
+		test_cmp expect actual
+	)
+'
+
+test_expect_success 'reflog with invalid object ID can be listed' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+		test_commit A &&
+		test-tool ref-store main update-ref msg refs/heads/missing \
+			$(test_oid deadbeef) "$ZERO_OID" REF_SKIP_OID_VERIFICATION &&
+		cat >expect <<-EOF &&
+		HEAD
+		refs/heads/main
+		refs/heads/missing
+		EOF
+		git reflog list >actual &&
+		test_cmp expect actual
+	)
 '
 
 test_done
